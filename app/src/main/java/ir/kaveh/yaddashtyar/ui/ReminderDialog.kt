@@ -1,7 +1,7 @@
 package ir.kaveh.yaddashtyar.ui
 
 import android.icu.util.Calendar
-import android.icu.util.PersianCalendar
+import android.icu.util.ULocale
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -66,16 +66,21 @@ private val PERSIAN_MONTHS = listOf(
 )
 private val WEEK_DAYS = listOf("ش", "ی", "د", "س", "چ", "پ", "ج")
 
+private val PERSIAN_LOCALE = ULocale("fa_IR@calendar=persian")
+
+/** android.icu has no public PersianCalendar class, but this returns one via the locale. */
+private fun cal(): Calendar = Calendar.getInstance(PERSIAN_LOCALE)
+
 /** Persian (Jalali) y / m(0-11) / d of a timestamp. */
 private fun toJ(ts: Long): Triple<Int, Int, Int> {
-    val c = PersianCalendar()
+    val c = cal()
     c.timeInMillis = ts
     return Triple(c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH))
 }
 
 /** Offset of the 1st day from Saturday (0..6) and the number of days of that Jalali month. */
 private fun monthInfo(y: Int, m: Int): Pair<Int, Int> {
-    val c = PersianCalendar()
+    val c = cal()
     c.clear()
     c.set(Calendar.YEAR, y)
     c.set(Calendar.MONTH, m)
@@ -87,7 +92,7 @@ private fun monthInfo(y: Int, m: Int): Pair<Int, Int> {
 }
 
 private fun toMillis(y: Int, m: Int, d: Int, h: Int, min: Int): Long {
-    val c = PersianCalendar()
+    val c = cal()
     c.clear()
     c.set(Calendar.YEAR, y)
     c.set(Calendar.MONTH, m)
