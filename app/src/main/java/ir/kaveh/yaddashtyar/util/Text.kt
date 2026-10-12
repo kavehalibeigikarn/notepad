@@ -124,6 +124,19 @@ object Dates {
         }
     }
 
+    /** Whole days from today until [ts] (negative when [ts] is in the past). */
+    fun daysUntil(ts: Long): Long = -daysAgo(ts)
+
+    fun countdown(ts: Long): String {
+        val left = daysUntil(ts)
+        return when {
+            left < 0 -> "${(-left).toInt().fa()} روز گذشته"
+            left == 0L -> "امروز آخرین روز"
+            left == 1L -> "فردا"
+            else -> "${left.toInt().fa()} روز مانده"
+        }
+    }
+
     /** Used for reminders (future-aware). */
     fun remind(ts: Long): String {
         val d = daysAgo(ts)

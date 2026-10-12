@@ -10,11 +10,18 @@ import ir.kaveh.yaddashtyar.data.Attachment
 import ir.kaveh.yaddashtyar.data.CheckItem
 import ir.kaveh.yaddashtyar.data.Note
 import ir.kaveh.yaddashtyar.data.NoteWithFiles
+import ir.kaveh.yaddashtyar.data.Deadline
+import ir.kaveh.yaddashtyar.data.appendHistory
+import ir.kaveh.yaddashtyar.data.deadlineList
 import ir.kaveh.yaddashtyar.data.encodeChecklist
+import ir.kaveh.yaddashtyar.data.encodeDeadlines
+import ir.kaveh.yaddashtyar.data.nearestOpenDeadline
 import ir.kaveh.yaddashtyar.data.isBlankNote
 import ir.kaveh.yaddashtyar.data.parseChecklist
 import ir.kaveh.yaddashtyar.data.tagList
 import ir.kaveh.yaddashtyar.util.Dates
+import ir.kaveh.yaddashtyar.util.DeadlineExtractor
+import ir.kaveh.yaddashtyar.util.ExtractOutcome
 import ir.kaveh.yaddashtyar.util.FileUtil
 import ir.kaveh.yaddashtyar.util.Kind
 import ir.kaveh.yaddashtyar.util.Reminders
@@ -65,11 +72,12 @@ data class Filters(
     val tag: String? = null,
     val file: FileFilter? = null,
     val reminder: Boolean = false,
+    val deadline: Boolean = false,
     val sort: SortMode = SortMode.UPDATED,
     val group: GroupMode = GroupMode.TIME,
     val grid: Boolean = true
 ) {
-    val active: Boolean get() = topic != null || tag != null || file != null || reminder
+    val active: Boolean get() = topic != null || tag != null || file != null || reminder || deadline
 }
 
 data class NoteGroup(val label: String, val notes: List<NoteWithFiles>)
@@ -95,7 +103,8 @@ data class Draft(
     val pinned: Boolean,
     val archived: Boolean,
     val items: List<CheckItem>,
-    val remindAt: Long
+    val remindAt: Long,
+    val deadlines: List<Deadline>
 )
 
 private const val ALPHA = "ابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی"
@@ -179,7 +188,8 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun setTag(t: String?) = filters.update { it.copy(tag = t, topic = null, view = leaveHiddenViews(it)) }
     fun toggleFile(ff: FileFilter) = filters.update { it.copy(file = if (it.file == ff) null else ff) }
     fun toggleReminder() = filters.update { it.copy(reminder = !it.reminder, view = leaveHiddenViews(it)) }
-    fun clearFilters() = filters.update { it.copy(topic = null, tag = null, file = null, reminder = false) }
+    fun toggleDeadline() = filters.update { it.copy(deadline = !it.deadline, view = leaveHiddenViews(it)) }
+    fun clearFilters() = filters.update { it.copy(topic = null, tag = null, file = null, reminder = false, deadline = false) }
 
     fun setSort(s: SortMode) {
         prefs.edit().putString("sort", s.name).apply()
@@ -259,6 +269,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             list = list.filter { n -> n.note.tagList().any { norm(it) == norm(fg) } }
         }
         if (f.reminder) list = list.filter { it.note.remindAt > 0 }
+        if (f.deadline) list = list.filter { it.note.nearestOpenDeadline() != null }
         val ff = f.file
         if (ff != null) {
             list = list.filter { n ->
@@ -297,6 +308,12 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun group(list: List<NoteWithFiles>, f: Filters): List<NoteGroup> {
+        if (f.deadline) {
+            // nearest deadline first; overdue ones come on top
+            return listOf(
+                NoteGroup("", list.sortedBy { it.note.nearestOpenDeadline()?.dueAt ?: Long.MAX_VALUE })
+            )
+        }
         val ordered = list.sortedWith(
             compareByDescending<NoteWithFiles> { it.note.pinned }.then(comparator(f.sort))
         )
@@ -382,19 +399,28 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         val tags = d.tags.joinToString("\n")
         val cl = encodeChecklist(d.items)
         val topic = d.topic.trim()
+        val dls = encodeDeadlines(d.deadlines)
         if (cur.title == d.title && cur.body == d.body && cur.topic == topic && cur.tags == tags &&
             cur.checklist == cl && cur.color == d.color && cur.pinned == d.pinned &&
-            cur.archived == d.archived && cur.remindAt == d.remindAt
+            cur.archived == d.archived && cur.remindAt == d.remindAt && cur.deadlines == dls
         ) return
+        val now = System.currentTimeMillis()
+        val contentChanged = cur.title != d.title || cur.body != d.body || cur.checklist != cl ||
+            cur.topic != topic || cur.tags != tags || cur.deadlines != dls
         dao.update(
             cur.copy(
                 title = d.title, body = d.body, checklist = cl, topic = topic, tags = tags,
                 color = d.color, pinned = d.pinned, archived = d.archived, remindAt = d.remindAt,
-                updatedAt = System.currentTimeMillis()
+                deadlines = dls,
+                history = if (contentChanged) appendHistory(cur.history, cur.createdAt, now) else cur.history,
+                updatedAt = now
             )
         )
         if (cur.remindAt != d.remindAt) {
             Reminders.schedule(ctx, id, if (cur.trashed) 0L else d.remindAt)
+        }
+        if (cur.deadlines != dls) {
+            Reminders.scheduleDeadlines(ctx, id, cur.deadlineList(), if (cur.trashed) emptyList() else d.deadlines)
         }
     }
 
@@ -403,6 +429,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun removeNote(id: Long) {
         Reminders.cancel(ctx, id)
         Reminders.cancelNotification(ctx, id)
+        dao.get(id)?.let { Reminders.cancelDeadlines(ctx, id, it.deadlineList()) }
         dao.filesOf(id).forEach { File(FileUtil.dir(ctx), it.path).delete() }
         dao.deleteNote(id)
     }
@@ -412,7 +439,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         val n = dao.get(id)
         if (n != null &&
             n.title.isBlank() && n.body.isBlank() && n.checklist.isBlank() &&
-            n.topic.isBlank() && n.tags.isBlank() && dao.filesOf(id).isEmpty()
+            n.topic.isBlank() && n.tags.isBlank() && n.deadlines.isBlank() && dao.filesOf(id).isEmpty()
         ) removeNote(id)
     }
 
@@ -422,6 +449,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         if (n != null) {
             dao.update(n.copy(trashed = true, pinned = false))
             Reminders.cancel(ctx, id)
+            Reminders.cancelDeadlines(ctx, id, n.deadlineList())
             events.trySend("به سطل زباله منتقل شد")
         }
     }
@@ -437,6 +465,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         if (n != null) {
             dao.update(n.copy(trashed = false))
             Reminders.schedule(ctx, id, n.remindAt)
+            Reminders.scheduleDeadlines(ctx, id, emptyList(), n.deadlineList())
         }
     }
 
@@ -458,7 +487,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                 n.copy(
                     id = 0,
                     title = (n.title.ifBlank { "بدون عنوان" }) + " (کپی)",
-                    pinned = false, remindAt = 0, createdAt = now, updatedAt = now
+                    pinned = false, remindAt = 0, deadlines = "", history = "", createdAt = now, updatedAt = now
                 )
             )
             for (a in dao.filesOf(id)) {
@@ -475,7 +504,10 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- attachments ----------
     private suspend fun touch(noteId: Long) {
-        dao.get(noteId)?.let { dao.update(it.copy(updatedAt = System.currentTimeMillis())) }
+        val now = System.currentTimeMillis()
+        dao.get(noteId)?.let {
+            dao.update(it.copy(updatedAt = now, history = appendHistory(it.history, it.createdAt, now)))
+        }
     }
 
     fun addFiles(noteId: Long, uris: List<Uri>) = enqueue {
@@ -513,6 +545,39 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         touch(a.noteId)
     }
 
+    // ---------- AI / documents ----------
+    val autoExtract = MutableStateFlow<Long?>(null)
+
+    fun aiKey(): String = prefs.getString("aiKey", "") ?: ""
+    fun aiModel(): String = prefs.getString("aiModel", DeadlineExtractor.DEFAULT_MODEL) ?: DeadlineExtractor.DEFAULT_MODEL
+    fun hasConsent(): Boolean = prefs.getBoolean("aiConsent", false)
+    fun setConsent() {
+        prefs.edit().putBoolean("aiConsent", true).apply()
+    }
+
+    fun setAi(key: String, model: String) {
+        prefs.edit()
+            .putString("aiKey", key.trim())
+            .putString("aiModel", model.trim().ifEmpty { DeadlineExtractor.DEFAULT_MODEL })
+            .apply()
+        events.trySend("تنظیمات ذخیره شد")
+    }
+
+    suspend fun extractDeadlines(a: Attachment): ExtractOutcome =
+        DeadlineExtractor.extract(ctx, FileUtil.fileOf(ctx, a), a, aiKey(), aiModel())
+
+    fun createNoteFromDocument(uri: Uri, onCreated: (Long) -> Unit) {
+        viewModelScope.launch {
+            val id = withContext(Dispatchers.IO) {
+                val nid = dao.insert(Note())
+                val a = FileUtil.importUri(ctx, uri, nid)
+                if (a != null) dao.insertFile(a)
+                nid
+            }
+            onCreated(id)
+        }
+    }
+
     // ---------- backup ----------
     fun exportTo(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -526,7 +591,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                         .put("title", n.title).put("body", n.body).put("checklist", n.checklist)
                         .put("topic", n.topic).put("tags", n.tags).put("color", n.color)
                         .put("pinned", n.pinned).put("archived", n.archived).put("trashed", n.trashed)
-                        .put("remindAt", n.remindAt)
+                        .put("remindAt", n.remindAt).put("deadlines", n.deadlines).put("history", n.history)
                         .put("createdAt", n.createdAt).put("updatedAt", n.updatedAt)
                     val fa = JSONArray()
                     byNote[n.id]?.forEach { a ->
@@ -593,16 +658,20 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                     if ((created to title) in existing) continue
                     val trashed = o.optBoolean("trashed")
                     val remindAt = o.optLong("remindAt")
+                    val dls = o.optString("deadlines")
                     val id = dao.insert(
                         Note(
                             title = title, body = o.optString("body"), checklist = o.optString("checklist"),
                             topic = o.optString("topic"), tags = o.optString("tags"), color = o.optInt("color"),
                             pinned = o.optBoolean("pinned"), archived = o.optBoolean("archived"),
-                            trashed = trashed, remindAt = remindAt, createdAt = created,
+                            trashed = trashed, remindAt = remindAt, deadlines = dls, history = o.optString("history"), createdAt = created,
                             updatedAt = o.optLong("updatedAt", created)
                         )
                     )
                     if (!trashed && remindAt > now) Reminders.schedule(ctx, id, remindAt)
+                    if (!trashed && dls.isNotBlank()) {
+                        Reminders.scheduleDeadlines(ctx, id, emptyList(), ir.kaveh.yaddashtyar.data.parseDeadlines(dls))
+                    }
                     val fa = o.optJSONArray("files")
                     if (fa != null) {
                         for (j in 0 until fa.length()) {

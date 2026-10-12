@@ -41,6 +41,16 @@ object FileUtil {
         }
     }
 
+    /** Documents the deadline extractor can read. */
+    fun canExtract(a: Attachment): Boolean {
+        val e = a.name.substringAfterLast('.', "").lowercase()
+        return when (kindOf(a)) {
+            Kind.PDF, Kind.IMAGE, Kind.TEXT -> true
+            Kind.DOC -> e == "docx" || e == "odt"
+            else -> false
+        }
+    }
+
     /** Copies the picked document into app-private storage. Call from a background thread. */
     fun importUri(ctx: Context, uri: Uri, noteId: Long): Attachment? {
         val cr = ctx.contentResolver

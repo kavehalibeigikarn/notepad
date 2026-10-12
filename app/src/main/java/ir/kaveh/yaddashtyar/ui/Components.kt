@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.CheckBox
 import androidx.compose.material.icons.rounded.CheckBoxOutlineBlank
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Event
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Movie
@@ -55,6 +56,8 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import ir.kaveh.yaddashtyar.data.Attachment
 import ir.kaveh.yaddashtyar.data.NoteWithFiles
+import ir.kaveh.yaddashtyar.data.historyList
+import ir.kaveh.yaddashtyar.data.nearestOpenDeadline
 import ir.kaveh.yaddashtyar.data.parseChecklist
 import ir.kaveh.yaddashtyar.data.tagList
 import ir.kaveh.yaddashtyar.ui.theme.noteBg
@@ -265,6 +268,29 @@ fun NoteCard(
                         }
                     }
                 }
+                val dl = remember(note.deadlines) { note.nearestOpenDeadline() }
+                if (dl != null) {
+                    val hot = Dates.daysUntil(dl.dueAt) <= 3
+                    val tone = if (hot) cs.error else cs.tertiary
+                    Spacer(Modifier.height(8.dp))
+                    Surface(shape = RoundedCornerShape(10.dp), color = tone.copy(alpha = 0.14f)) {
+                        Row(
+                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Event, null, Modifier.size(15.dp), tint = tone)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                dl.title + " · " + Dates.countdown(dl.dueAt),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = tone,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
                 if (note.remindAt > 0) {
                     val future = note.remindAt > System.currentTimeMillis()
                     Spacer(Modifier.height(8.dp))
@@ -285,7 +311,8 @@ fun NoteCard(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    Dates.relative(dateOf),
+                    Dates.relative(dateOf) +
+                        note.historyList().size.let { if (it > 0) " · ${it.fa()} به‌روزرسانی" else "" },
                     style = MaterialTheme.typography.labelSmall,
                     color = cs.outline
                 )

@@ -112,13 +112,15 @@ fun ReminderDialog(
     initial: Long,
     onConfirm: (Long) -> Unit,
     onClear: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    dateOnly: Boolean = false
 ) {
     val cs = MaterialTheme.colorScheme
     val zone = remember { ZoneId.systemDefault() }
     val now = System.currentTimeMillis()
     val base = remember {
-        if (initial > now) initial
+        if (dateOnly) (if (initial > 0) initial else now)
+        else if (initial > now) initial
         else java.time.ZonedDateTime.now(zone).plusHours(1).withMinute(0).withSecond(0).withNano(0)
             .toInstant().toEpochMilli()
     }
@@ -153,8 +155,8 @@ fun ReminderDialog(
         add("هفتهٔ بعد ۹:۰۰" to at(7, 9))
     }
 
-    val chosen = toMillis(jy, jm, jd, hour, minute)
-    val valid = chosen > now
+    val chosen = if (dateOnly) toMillis(jy, jm, jd, 12, 0) else toMillis(jy, jm, jd, hour, minute)
+    val valid = dateOnly || chosen > now
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -166,18 +168,23 @@ fun ReminderDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Alarm, null, tint = cs.tertiary)
                     Spacer(Modifier.width(10.dp))
-                    Text("یادآوری", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (dateOnly) "تاریخ مهلت" else "یادآوری",
+                        style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                ) {
-                    presets.forEach { (label, ts) ->
-                        AssistChip(onClick = { applyTs(ts) }, label = { Text(label) })
+                if (!dateOnly) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(0.dp)
+                    ) {
+                        presets.forEach { (label, ts) ->
+                            AssistChip(onClick = { applyTs(ts) }, label = { Text(label) })
+                        }
                     }
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp))
                 }
-                HorizontalDivider(Modifier.padding(vertical = 10.dp))
 
                 // month header
                 val canPrev = viewY * 12 + viewM > today.first * 12 + today.second
@@ -220,7 +227,7 @@ fun ReminderDialog(
                                 if (day in 1..len) {
                                     val ymd = viewY * 10000 + viewM * 100 + day
                                     val tymd = today.first * 10000 + today.second * 100 + today.third
-                                    val past = ymd < tymd
+                                    val past = !dateOnly && ymd < tymd
                                     val selected = viewY == jy && viewM == jm && day == jd
                                     Box(
                                         Modifier
@@ -256,21 +263,24 @@ fun ReminderDialog(
                 HorizontalDivider(Modifier.padding(vertical = 10.dp))
 
                 // time
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Stepper(two(hour), onUp = { hour = (hour + 1) % 24 }, onDown = { hour = (hour + 23) % 24 })
-                    Text(
-                        " : ", style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp)
-                    )
-                    Stepper(two(minute), onUp = { minute = (minute + 5) % 60 }, onDown = { minute = (minute + 55) % 60 })
+                if (!dateOnly) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Stepper(two(hour), onUp = { hour = (hour + 1) % 24 }, onDown = { hour = (hour + 23) % 24 })
+                        Text(
+                            " : ", style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                        Stepper(two(minute), onUp = { minute = (minute + 5) % 60 }, onDown = { minute = (minute + 55) % 60 })
+                    }
+                    Spacer(Modifier.height(8.dp))
                 }
-                Spacer(Modifier.height(8.dp))
                 Text(
-                    if (valid) "یادآوری: " + Dates.remind(chosen) else "زمان انتخاب‌شده گذشته است",
+                    if (dateOnly) Dates.full(chosen)
+                    else if (valid) "یادآوری: " + Dates.remind(chosen) else "زمان انتخاب‌شده گذشته است",
                     Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyMedium,
@@ -278,7 +288,7 @@ fun ReminderDialog(
                 )
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (initial > 0) {
+                    if (initial > 0 && !dateOnly) {
                         TextButton(onClick = onClear) { Text("حذف یادآوری", color = cs.error) }
                     }
                     Spacer(Modifier.weight(1f))

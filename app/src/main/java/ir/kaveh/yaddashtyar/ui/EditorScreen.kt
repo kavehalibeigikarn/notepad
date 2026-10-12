@@ -58,6 +58,7 @@ import androidx.compose.material.icons.rounded.CheckBox
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Event
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MoreVert
@@ -69,6 +70,7 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -96,6 +98,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -124,12 +127,18 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import ir.kaveh.yaddashtyar.data.Attachment
+import ir.kaveh.yaddashtyar.data.Deadline
+import ir.kaveh.yaddashtyar.data.historyList
+import ir.kaveh.yaddashtyar.data.parseDeadlines
 import ir.kaveh.yaddashtyar.data.CheckItem
 import ir.kaveh.yaddashtyar.data.parseChecklist
 import ir.kaveh.yaddashtyar.data.tagList
 import ir.kaveh.yaddashtyar.ui.theme.NoteAccents
 import ir.kaveh.yaddashtyar.ui.theme.noteBg
 import ir.kaveh.yaddashtyar.util.AudioController
+import ir.kaveh.yaddashtyar.util.ExtractOutcome
+import ir.kaveh.yaddashtyar.util.Extraction
+import ir.kaveh.yaddashtyar.util.basisText
 import ir.kaveh.yaddashtyar.util.Dates
 import ir.kaveh.yaddashtyar.util.FileUtil
 import ir.kaveh.yaddashtyar.util.Kind
@@ -138,7 +147,9 @@ import ir.kaveh.yaddashtyar.util.fa
 import ir.kaveh.yaddashtyar.util.fileSize
 import ir.kaveh.yaddashtyar.util.formatClock
 import ir.kaveh.yaddashtyar.util.norm
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
 
@@ -170,6 +181,14 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
     var topicFocused by remember { mutableStateOf(false) }
     var tagFocused by remember { mutableStateOf(false) }
     var pendingCapture by rememberSaveable { mutableStateOf<String?>(null) }
+    val deadlines = remember { mutableStateListOf<Deadline>() }
+    val scope = rememberCoroutineScope()
+    val jobRef = remember { arrayOfNulls<Job>(1) }
+    var extractState by remember { mutableStateOf<ExtractUi>(ExtractUi.Idle) }
+    var showAiSettings by remember { mutableStateOf(false) }
+    var consentFor by remember { mutableStateOf<Attachment?>(null) }
+    var dlEdit by remember { mutableStateOf<Deadline?>(null) }
+    var dlAdd by remember { mutableStateOf(false) }
 
     val recorder = remember { VoiceRecorder(ctx) }
     val audio = remember { AudioController() }
@@ -199,11 +218,12 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
             color = n.color; pinned = n.pinned; archived = n.archived; remindAt = n.remindAt
             tags.clear(); tags.addAll(n.tagList())
             items.clear(); items.addAll(parseChecklist(n.checklist))
+            deadlines.clear(); deadlines.addAll(parseDeadlines(n.deadlines))
             loaded = true
         }
     }
 
-    val draft = Draft(title, body, topic, tags.toList(), color, pinned, archived, items.toList(), remindAt)
+    val draft = Draft(title, body, topic, tags.toList(), color, pinned, archived, items.toList(), remindAt, deadlines.toList())
     LaunchedEffect(draft, loaded) {
         if (loaded) {
             delay(400)
@@ -222,7 +242,7 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
         if (!loaded) return null
         addTag(tagInput)
         tagInput = ""
-        return Draft(title, body, topic, tags.toList(), color, pinned, archived, items.toList(), remindAt)
+        return Draft(title, body, topic, tags.toList(), color, pinned, archived, items.toList(), remindAt, deadlines.toList())
     }
 
     fun stamp(): String {
@@ -296,6 +316,35 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
         }
     }
 
+    fun runExtraction(a: Attachment) {
+        extractState = ExtractUi.Loading(a.name)
+        jobRef[0] = scope.launch {
+            extractState = when (val out = vm.extractDeadlines(a)) {
+                is ExtractOutcome.Ok -> ExtractUi.Review(out.result)
+                is ExtractOutcome.Fail -> ExtractUi.Error(out.message)
+            }
+        }
+    }
+
+    fun startExtraction(a: Attachment) {
+        when {
+            vm.aiKey().isBlank() -> showAiSettings = true
+            !vm.hasConsent() -> consentFor = a
+            else -> runExtraction(a)
+        }
+    }
+
+    val autoId by vm.autoExtract.collectAsStateWithLifecycle()
+    LaunchedEffect(autoId, nwf?.files?.size) {
+        if (autoId == noteId) {
+            val f = nwf?.files.orEmpty().firstOrNull { FileUtil.canExtract(it) }
+            if (f != null) {
+                vm.autoExtract.value = null
+                startExtraction(f)
+            }
+        }
+    }
+
     val bg by animateColorAsState(
         if (color == 0) cs.background else noteBg(color), label = "editorBg"
     )
@@ -323,6 +372,14 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
                                 text = { Text(if (archived) "خارج کردن از بایگانی" else "بایگانی") },
                                 leadingIcon = { Icon(if (archived) Icons.Rounded.Unarchive else Icons.Rounded.Archive, null) },
                                 onClick = { menu = false; archived = !archived; close() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("درج تاریخ و ساعت در متن") },
+                                leadingIcon = { Icon(Icons.Rounded.Event, null) },
+                                onClick = {
+                                    menu = false
+                                    body = body.trimEnd() + (if (body.isBlank()) "" else "\n\n") + "— " + stamp() + "\n"
+                                }
                             )
                             DropdownMenuItem(
                                 text = { Text("ساخت کپی") },
@@ -570,6 +627,22 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
 
             // reminder
             ReminderRow(remindAt = remindAt, onClick = { showReminder = true }, onClear = { remindAt = 0L })
+            Spacer(Modifier.height(8.dp))
+
+            // legal deadlines
+            DeadlinesSection(
+                deadlines = deadlines,
+                canExtract = nwf?.files.orEmpty().any { FileUtil.canExtract(it) },
+                onAdd = { dlAdd = true },
+                onExtract = {
+                    nwf?.files.orEmpty().firstOrNull { FileUtil.canExtract(it) }?.let { startExtraction(it) }
+                },
+                onEdit = { dlEdit = it },
+                onToggle = { d ->
+                    val i = deadlines.indexOfFirst { it.id == d.id }
+                    if (i >= 0) deadlines[i] = deadlines[i].copy(done = !d.done)
+                }
+            )
             Spacer(Modifier.height(14.dp))
 
             // body
@@ -672,6 +745,18 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )
+                                if (FileUtil.canExtract(a)) {
+                                    Box(
+                                        Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(4.dp)
+                                            .size(26.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.Black.copy(alpha = 0.55f))
+                                            .clickable { startExtraction(a) },
+                                        contentAlignment = Alignment.Center
+                                    ) { Icon(Icons.Rounded.Event, "استخراج مهلت", Modifier.size(16.dp), tint = Color.White) }
+                                }
                                 Box(
                                     Modifier
                                         .align(Alignment.TopStart)
@@ -704,7 +789,8 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
                             a = a,
                             onOpen = { FileUtil.open(ctx, a) },
                             onShare = { FileUtil.share(ctx, a) },
-                            onRemove = { vm.removeFile(a) }
+                            onRemove = { vm.removeFile(a) },
+                            onExtract = if (FileUtil.canExtract(a)) ({ startExtraction(a) }) else null
                         )
                     }
                     Spacer(Modifier.height(8.dp))
@@ -714,11 +800,7 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
             val n = nwf?.note
             if (n != null) {
                 Spacer(Modifier.height(18.dp))
-                Text(
-                    "ایجاد: ${Dates.relative(n.createdAt)}  ·  ویرایش: ${Dates.relative(n.updatedAt)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = cs.outline
-                )
+                HistorySection(n.createdAt, n.updatedAt, n.historyList())
             }
             Spacer(Modifier.height(32.dp))
         }
@@ -734,6 +816,90 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
             },
             onClear = { remindAt = 0L; showReminder = false },
             onDismiss = { showReminder = false }
+        )
+    }
+
+    when (val st = extractState) {
+        ExtractUi.Idle -> {}
+        is ExtractUi.Loading -> LoadingDialog(
+            fileName = st.fileName,
+            onCancel = {
+                jobRef[0]?.cancel()
+                extractState = ExtractUi.Idle
+            }
+        )
+        is ExtractUi.Review -> ExtractReviewDialog(
+            result = st.result,
+            onSave = { picks, offs ->
+                var nid = deadlines.maxOfOrNull { it.id } ?: 0L
+                var added = 0
+                picks.forEach { p ->
+                    val due = p.dueAt
+                    if (due != null) {
+                        nid += 1
+                        added += 1
+                        deadlines.add(
+                            Deadline(
+                                id = nid, title = p.c.title, dueAt = due,
+                                basis = basisText(p.c), quote = p.c.quote,
+                                offsets = offs.sortedDescending()
+                            )
+                        )
+                    }
+                }
+                if (title.isBlank() && st.result.documentType.isNotBlank()) title = st.result.documentType
+                ensureNotificationPermission()
+                toast(added.fa() + " مهلت افزوده شد")
+                extractState = ExtractUi.Idle
+            },
+            onDismiss = { extractState = ExtractUi.Idle }
+        )
+        is ExtractUi.Error -> AlertDialog(
+            onDismissRequest = { extractState = ExtractUi.Idle },
+            title = { Text("استخراج ناموفق بود") },
+            text = { Text(st.message) },
+            confirmButton = { TextButton(onClick = { extractState = ExtractUi.Idle }) { Text("باشه") } }
+        )
+    }
+
+    if (showAiSettings) {
+        AiSettingsDialog(
+            initialKey = vm.aiKey(),
+            initialModel = vm.aiModel(),
+            onSave = { k, m -> vm.setAi(k, m); showAiSettings = false },
+            onDismiss = { showAiSettings = false }
+        )
+    }
+
+    val cf = consentFor
+    if (cf != null) {
+        ConsentDialog(
+            onAccept = {
+                vm.setConsent()
+                consentFor = null
+                runExtraction(cf)
+            },
+            onDismiss = { consentFor = null }
+        )
+    }
+
+    if (dlAdd || dlEdit != null) {
+        val ex = dlEdit
+        DeadlineEditDialog(
+            existing = ex,
+            onSave = { d ->
+                if (ex == null) {
+                    deadlines.add(d.copy(id = (deadlines.maxOfOrNull { it.id } ?: 0L) + 1))
+                } else {
+                    val i = deadlines.indexOfFirst { it.id == ex.id }
+                    if (i >= 0) deadlines[i] = d.copy(id = ex.id)
+                }
+                dlAdd = false
+                dlEdit = null
+                ensureNotificationPermission()
+            },
+            onDelete = if (ex != null) ({ deadlines.removeAll { it.id == ex.id }; dlEdit = null }) else null,
+            onDismiss = { dlAdd = false; dlEdit = null }
         )
     }
 
@@ -911,7 +1077,13 @@ private fun AudioRow(
 }
 
 @Composable
-private fun FileRow(a: Attachment, onOpen: () -> Unit, onShare: () -> Unit, onRemove: () -> Unit) {
+private fun FileRow(
+    a: Attachment,
+    onOpen: () -> Unit,
+    onShare: () -> Unit,
+    onRemove: () -> Unit,
+    onExtract: (() -> Unit)? = null
+) {
     val cs = MaterialTheme.colorScheme
     Surface(
         onClick = onOpen,
@@ -931,6 +1103,11 @@ private fun FileRow(a: Attachment, onOpen: () -> Unit, onShare: () -> Unit, onRe
             Column(Modifier.weight(1f)) {
                 Text(a.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(a.size.fileSize(), style = MaterialTheme.typography.labelSmall, color = cs.outline)
+            }
+            if (onExtract != null) {
+                IconButton(onClick = onExtract) {
+                    Icon(Icons.Rounded.Event, "استخراج مهلت", Modifier.size(20.dp), tint = cs.tertiary)
+                }
             }
             IconButton(onClick = onShare) { Icon(Icons.Rounded.Share, "اشتراک‌گذاری", Modifier.size(20.dp), tint = cs.onSurfaceVariant) }
             IconButton(onClick = onRemove) { Icon(Icons.Rounded.Close, "حذف", Modifier.size(20.dp), tint = cs.onSurfaceVariant) }
@@ -976,4 +1153,39 @@ private fun ImagePreview(a: Attachment, onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun HistorySection(created: Long, updated: Long, history: List<Long>) {
+    val cs = MaterialTheme.colorScheme
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            "ایجاد: ${Dates.relative(created)}  ·  آخرین ویرایش: ${Dates.relative(updated)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = cs.outline
+        )
+        if (history.isNotEmpty()) {
+            TextButton(onClick = { open = !open }) {
+                Text("تاریخچهٔ به‌روزرسانی (${history.size.fa()}) " + if (open) "▴" else "▾")
+            }
+            if (open) {
+                history.asReversed().forEach { ts ->
+                    Text(
+                        "• " + Dates.full(ts) + "، " + Dates.time(ts),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = cs.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp, bottom = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private sealed interface ExtractUi {
+    data object Idle : ExtractUi
+    data class Loading(val fileName: String) : ExtractUi
+    data class Review(val result: Extraction) : ExtractUi
+    data class Error(val message: String) : ExtractUi
 }

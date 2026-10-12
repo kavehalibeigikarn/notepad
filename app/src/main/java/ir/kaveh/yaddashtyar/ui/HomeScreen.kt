@@ -37,6 +37,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Event
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Folder
@@ -106,6 +108,7 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
     val ctx = LocalContext.current
     var confirmDelete by remember { mutableStateOf<Long?>(null) }
     var confirmEmpty by remember { mutableStateOf(false) }
+    var showAi by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         vm.events.receiveAsFlow().collect { snack.showSnackbar(it) }
@@ -117,6 +120,16 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> if (uri != null) vm.importFrom(uri) }
+    val docLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            vm.createNoteFromDocument(uri) { id ->
+                vm.autoExtract.value = id
+                onOpen(id)
+            }
+        }
+    }
 
     BackHandler(enabled = q.isNotEmpty() || f.active || f.view != ViewMode.ALL) {
         if (q.isNotEmpty()) vm.setQuery("")
@@ -138,6 +151,22 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
                 onImport = {
                     scope.launch { drawer.close() }
                     importLauncher.launch(arrayOf("*/*"))
+                },
+                onDocument = {
+                    scope.launch { drawer.close() }
+                    docLauncher.launch(
+                        arrayOf(
+                            "application/pdf",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            "application/vnd.oasis.opendocument.text",
+                            "text/plain",
+                            "image/*"
+                        )
+                    )
+                },
+                onAiSettings = {
+                    scope.launch { drawer.close() }
+                    showAi = true
                 }
             )
         }
@@ -231,6 +260,15 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
                 }
             }
         }
+    }
+
+    if (showAi) {
+        AiSettingsDialog(
+            initialKey = vm.aiKey(),
+            initialModel = vm.aiModel(),
+            onSave = { k, m -> vm.setAi(k, m); showAi = false },
+            onDismiss = { showAi = false }
+        )
     }
 
     val del = confirmDelete
@@ -379,6 +417,14 @@ private fun FilterRow(f: Filters, vm: NotesViewModel) {
                 leadingIcon = { Icon(Icons.Rounded.Alarm, null, Modifier.size(16.dp)) }
             )
         }
+        item {
+            FilterChip(
+                selected = f.deadline,
+                onClick = { vm.toggleDeadline() },
+                label = { Text("مهلت‌دار") },
+                leadingIcon = { Icon(Icons.Rounded.Event, null, Modifier.size(16.dp)) }
+            )
+        }
         items(FileFilter.values().toList()) { ff ->
             FilterChip(
                 selected = f.file == ff,
@@ -447,7 +493,9 @@ private fun DrawerContent(
     vm: NotesViewModel,
     closeDrawer: () -> Unit,
     onExport: () -> Unit,
-    onImport: () -> Unit
+    onImport: () -> Unit,
+    onDocument: () -> Unit,
+    onAiSettings: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     val itemPad = NavigationDrawerItemDefaults.ItemPadding
@@ -526,6 +574,16 @@ private fun DrawerContent(
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 24.dp))
+            NavigationDrawerItem(
+                label = { Text("یادداشت از سند (استخراج مهلت)") },
+                icon = { Icon(Icons.Rounded.Event, null) },
+                selected = false, onClick = onDocument, modifier = Modifier.padding(itemPad)
+            )
+            NavigationDrawerItem(
+                label = { Text("تنظیمات هوش مصنوعی") },
+                icon = { Icon(Icons.Rounded.Settings, null) },
+                selected = false, onClick = onAiSettings, modifier = Modifier.padding(itemPad)
+            )
             NavigationDrawerItem(
                 label = { Text("پشتیبان‌گیری (ZIP)") },
                 icon = { Icon(Icons.Rounded.FileDownload, null) },
