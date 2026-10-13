@@ -45,6 +45,9 @@ interface NoteDao {
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun deleteNote(id: Long)
 
+    @Update
+    suspend fun updateFile(file: Attachment)
+
     @Insert
     suspend fun insertFile(file: Attachment): Long
 

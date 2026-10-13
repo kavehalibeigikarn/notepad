@@ -13,13 +13,50 @@ android {
         applicationId = "ir.kaveh.yaddashtyar"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 5
+        versionName = "1.4"
+    }
+
+    // دو نسخه با یک applicationId و یک کلید امضا: lite (بدون هوش مصنوعی) و full.
+    // چون شناسه و امضا یکی است، نصب full روی lite داده‌ها را حفظ می‌کند.
+    flavorDimensions += "edition"
+    productFlavors {
+        create("lite") {
+            dimension = "edition"
+            versionNameSuffix = "-lite"
+            buildConfigField("boolean", "AI_ENABLED", "false")
+        }
+        create("full") {
+            dimension = "edition"
+            versionNameSuffix = "-full"
+            buildConfigField("boolean", "AI_ENABLED", "true")
+        }
+    }
+
+    // کلید امضای ثابت از متغیرهای محیطی (GitHub Secrets). بدون آن، با کلید debug امضا می‌شود.
+    val ksPath: String? = System.getenv("KEYSTORE_PATH")
+    val hasKeystore = ksPath != null && file(ksPath).exists()
+    signingConfigs {
+        if (hasKeystore) {
+            create("release") {
+                storeFile = file(ksPath!!)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (hasKeystore) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+        }
+        debug {
+            // با همان کلید ثابت، حتی نسخه debug هم روی نسخهٔ قبلی نصب (آپدیت) می‌شود
+            if (hasKeystore) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
@@ -31,6 +68,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -60,4 +98,5 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 }

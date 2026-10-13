@@ -233,6 +233,16 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
 
     fun toast(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
 
+    var showGuide by remember { mutableStateOf(false) }
+    /** بعد از پایان مهلت آپدیت، افزودن پیوست/ضبط/یادآوری تازه بسته است. */
+    fun blockedByUpdate(): Boolean {
+        if (vm.limited) {
+            toast("برای استفاده از این قابلیت، نسخهٔ جدید برنامه را نصب کنید")
+            return true
+        }
+        return false
+    }
+
     fun addTag(raw: String) {
         val t = raw.trim().trimStart('#').replace(Regex("\\s+"), "_").replace(",", "").replace("،", "")
         if (t.isNotEmpty() && tags.none { norm(it) == norm(t) }) tags.add(t)
@@ -453,7 +463,11 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
                                     }
                                 }
                             }
-                            IconButton(onClick = { showReminder = true }) {
+                            IconButton(onClick = {
+                                if (blockedByUpdate()) return@IconButton
+                                // بار اول، راهنمای تنظیمات باتری/هشدار دقیق را نشان بده
+                                if (!vm.guideSeen()) { vm.setGuideSeen(); showGuide = true } else showReminder = true
+                            }) {
                                 Icon(
                                     Icons.Rounded.Alarm, "یادآوری",
                                     tint = if (remindAt > System.currentTimeMillis()) cs.tertiary else cs.onSurfaceVariant
@@ -464,7 +478,7 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
                                 items.add(CheckItem(nid, "", false))
                                 focusItem = nid
                             }) { Icon(Icons.Rounded.CheckBox, "افزودن چک‌لیست", tint = cs.onSurfaceVariant) }
-                            IconButton(onClick = { filePicker.launch("*/*") }) {
+                            IconButton(onClick = { if (!blockedByUpdate()) filePicker.launch("*/*") }) {
                                 Icon(Icons.Rounded.AttachFile, "افزودن پیوست", tint = cs.onSurfaceVariant)
                             }
                             Box {
@@ -475,16 +489,17 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
                                     DropdownMenuItem(
                                         text = { Text("عکس گرفتن") },
                                         leadingIcon = { Icon(Icons.Rounded.CameraAlt, null) },
-                                        onClick = { cameraMenu = false; capture(false) }
+                                        onClick = { cameraMenu = false; if (!blockedByUpdate()) capture(false) }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("فیلم گرفتن") },
                                         leadingIcon = { Icon(Icons.Rounded.Videocam, null) },
-                                        onClick = { cameraMenu = false; capture(true) }
+                                        onClick = { cameraMenu = false; if (!blockedByUpdate()) capture(true) }
                                     )
                                 }
                             }
                             IconButton(onClick = {
+                                if (blockedByUpdate()) return@IconButton
                                 if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
                                     PackageManager.PERMISSION_GRANTED
                                 ) startRecording()
@@ -860,6 +875,10 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
             text = { Text(st.message) },
             confirmButton = { TextButton(onClick = { extractState = ExtractUi.Idle }) { Text("باشه") } }
         )
+    }
+
+    if (showGuide) {
+        ReminderGuideDialog(onDismiss = { showGuide = false; showReminder = true })
     }
 
     if (showAiSettings) {

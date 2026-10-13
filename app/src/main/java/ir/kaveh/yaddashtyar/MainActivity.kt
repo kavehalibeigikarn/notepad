@@ -1,8 +1,24 @@
 package ir.kaveh.yaddashtyar
 
+import android.app.KeyguardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.WindowManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import ir.kaveh.yaddashtyar.ui.LockScreen
+import ir.kaveh.yaddashtyar.ui.RegisterScreen
+import ir.kaveh.yaddashtyar.ui.UpdateDialog
+import ir.kaveh.yaddashtyar.ui.UpdateRequiredScreen
+import ir.kaveh.yaddashtyar.util.Cfg
+import ir.kaveh.yaddashtyar.util.UpdateLevel
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -41,9 +57,54 @@ class MainActivity : ComponentActivity() {
 
     private val vm: NotesViewModel by lazy { ViewModelProvider(this)[NotesViewModel::class.java] }
 
+    private var locked by mutableStateOf(false)
+    private var unlocking = false
+    private var bgAt = 0L
+
+    private val unlockLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        unlocking = false
+        if (it.resultCode == RESULT_OK) locked = false
+    }
+
+    /** باز کردن قفل با صفحهٔ استاندارد اندروید (اثر انگشت / چهره / الگو / رمز گوشی). */
+    private fun requestUnlock() {
+        if (unlocking) return
+        val km = getSystemService(KeyguardManager::class.java)
+        val i = km?.createConfirmDeviceCredentialIntent("یادداشت‌یار", "برای ادامه، قفل گوشی را باز کنید")
+        if (i == null) {
+            // قفل صفحه از گوشی برداشته شده؛ قفل برنامه بی‌معنی است
+            locked = false
+            vm.setLock(false)
+        } else {
+            unlocking = true
+            unlockLauncher.launch(i)
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (vm.lockEnabled.value && !unlocking) {
+            val away = SystemClock.elapsedRealtime() - bgAt
+            if (bgAt == 0L || away > Cfg.LOCK_AFTER_SECONDS * 1000L) locked = true
+            if (locked) window.decorView.post { requestUnlock() }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!unlocking) bgAt = SystemClock.elapsedRealtime()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // با قفل برنامه، تصویر برنامه در لیست اخیر و اسکرین‌شات مخفی می‌شود
+        lifecycleScope.launch {
+            vm.lockEnabled.collect { on ->
+                if (on) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
         if (savedInstanceState == null) {
             handleOpen(intent)
             handleShare(intent)
@@ -52,7 +113,20 @@ class MainActivity : ComponentActivity() {
             YaddashtTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                        App()
+                        val reg by vm.showRegister.collectAsStateWithLifecycle()
+                        val up by vm.update.collectAsStateWithLifecycle()
+                        val exportLauncher = rememberLauncherForActivityResult(
+                            ActivityResultContracts.CreateDocument("application/zip")
+                        ) { uri -> if (uri != null) vm.exportTo(uri) }
+                        when {
+                            locked -> LockScreen(onUnlock = ::requestUnlock)
+                            up.level == UpdateLevel.BLOCKED -> UpdateRequiredScreen(up, onBackup = {
+                                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+                                exportLauncher.launch("yaddasht-backup-$stamp.zip")
+                            })
+                            reg -> RegisterScreen(onRegister = vm::register, onSkip = vm::skipRegister)
+                            else -> App()
+                        }
                     }
                 }
             }
@@ -107,6 +181,12 @@ private fun App(vm: NotesViewModel = viewModel()) {
         }
     }
     LaunchedEffect(editing) { editing?.let { lastId = it } }
+
+    val up by vm.update.collectAsStateWithLifecycle()
+    var updateShown by rememberSaveable { mutableStateOf(false) }
+    if (!updateShown && (up.level == UpdateLevel.AVAILABLE || up.level == UpdateLevel.LIMITED)) {
+        UpdateDialog(up, onDismiss = { updateShown = true })
+    }
 
     Box(Modifier.fillMaxSize()) {
         HomeScreen(vm = vm, onOpen = { editing = it })

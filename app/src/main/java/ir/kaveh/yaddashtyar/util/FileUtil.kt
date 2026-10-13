@@ -43,6 +43,7 @@ object FileUtil {
 
     /** Documents the deadline extractor can read. */
     fun canExtract(a: Attachment): Boolean {
+        if (!ir.kaveh.yaddashtyar.BuildConfig.AI_ENABLED) return false
         val e = a.name.substringAfterLast('.', "").lowercase()
         return when (kindOf(a)) {
             Kind.PDF, Kind.IMAGE, Kind.TEXT -> true
@@ -83,9 +84,7 @@ object FileUtil {
         }
         if (size <= 0) size = out.length()
         val probe = Attachment(noteId = noteId, name = name, mime = mime, size = size, path = stored, addedAt = 0)
-        val text = if (kindOf(probe) == Kind.TEXT && out.length() < 600_000) {
-            runCatching { out.readText().take(200_000) }.getOrDefault("")
-        } else ""
+        val text = TextIndex.extract(ctx, out, probe)
         return probe.copy(addedAt = System.currentTimeMillis(), text = text)
     }
 

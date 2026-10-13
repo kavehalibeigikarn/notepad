@@ -91,23 +91,43 @@ object Reminders {
         NotificationManagerCompat.from(context).cancel(noteId.toInt())
     }
 
+    fun alarmMode(ctx: Context): Boolean =
+        ctx.getSharedPreferences("prefs", Context.MODE_PRIVATE).getBoolean("alarmMode", true)
+
+    private fun previewOf(n: Note): String {
+        val raw = n.body.ifBlank { parseChecklist(n.checklist).firstOrNull()?.text ?: "" }.trim().take(200)
+        return raw.ifEmpty { "زمان یادآوری فرا رسید" }
+    }
+
+    /** یادآور یادداشت: به‌صورت زنگ هشدار (پیش‌فرض) یا اعلان معمولی. */
     fun notify(context: Context, n: Note) {
+        val ctx = context.applicationContext
+        if (alarmMode(ctx)) {
+            try {
+                AlarmService.start(ctx, n.id, n.title.ifBlank { "یادآوری یادداشت" }, previewOf(n))
+                return
+            } catch (e: Exception) {
+                // اجازهٔ شروع سرویس نبود؛ اعلان معمولی
+            }
+        }
+        notifyPlain(ctx, n.id, n.title.ifBlank { "یادآوری یادداشت" }, previewOf(n))
+    }
+
+    fun notifyPlain(context: Context, noteId: Long, title: String, text: String) {
         val ctx = context.applicationContext
         ensureChannel(ctx)
         val open = Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(EXTRA_OPEN, n.id)
-        val openPi = PendingIntent.getActivity(ctx, n.id.toInt(), open, flags())
+            .putExtra(EXTRA_OPEN, noteId)
+        val openPi = PendingIntent.getActivity(ctx, noteId.toInt(), open, flags())
         val snooze = Intent(ctx, ReminderReceiver::class.java)
             .setAction(ACTION_SNOOZE)
-            .putExtra("noteId", n.id)
-        val snoozePi = PendingIntent.getBroadcast(ctx, n.id.toInt(), snooze, flags())
-        val raw = n.body.ifBlank { parseChecklist(n.checklist).firstOrNull()?.text ?: "" }.trim().take(200)
-        val text = raw.ifEmpty { "زمان یادآوری فرا رسید" }
+            .putExtra("noteId", noteId)
+        val snoozePi = PendingIntent.getBroadcast(ctx, noteId.toInt(), snooze, flags())
         val b = NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(n.title.ifBlank { "یادآوری یادداشت" })
-            .setContentText(text)
+            .setContentTitle(title.ifBlank { "یادآوری یادداشت" })
+            .setContentText(text.ifBlank { "زمان یادآوری فرا رسید" })
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(openPi)
             .setAutoCancel(true)
@@ -115,7 +135,7 @@ object Reminders {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .addAction(0, "۱۰ دقیقه بعد", snoozePi)
         try {
-            NotificationManagerCompat.from(ctx).notify(n.id.toInt(), b.build())
+            NotificationManagerCompat.from(ctx).notify(noteId.toInt(), b.build())
         } catch (e: SecurityException) {
             // notification permission missing: nothing we can do
         }
@@ -218,6 +238,7 @@ class ReminderReceiver : BroadcastReceiver() {
                 if (n != null) {
                     when (action) {
                         Reminders.ACTION_SNOOZE -> if (!n.trashed) {
+                            AlarmService.stop(app)
                             val at = System.currentTimeMillis() + 10 * 60_000L
                             dao.update(n.copy(remindAt = at))
                             Reminders.schedule(app, id, at)
@@ -247,7 +268,9 @@ class ReminderReceiver : BroadcastReceiver() {
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val a = intent.action
-        if (a != Intent.ACTION_BOOT_COMPLETED && a != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        if (a != Intent.ACTION_BOOT_COMPLETED && a != Intent.ACTION_MY_PACKAGE_REPLACED &&
+            a != "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED"
+        ) return
         val app = context.applicationContext
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {

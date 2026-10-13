@@ -25,6 +25,13 @@ import ir.kaveh.yaddashtyar.util.ExtractOutcome
 import ir.kaveh.yaddashtyar.util.FileUtil
 import ir.kaveh.yaddashtyar.util.Kind
 import ir.kaveh.yaddashtyar.util.Reminders
+import ir.kaveh.yaddashtyar.util.BackupCrypto
+import ir.kaveh.yaddashtyar.util.Registration
+import ir.kaveh.yaddashtyar.util.TextIndex
+import ir.kaveh.yaddashtyar.util.SecureStore
+import ir.kaveh.yaddashtyar.util.UpdateLevel
+import ir.kaveh.yaddashtyar.util.UpdateStatus
+import ir.kaveh.yaddashtyar.util.Updater
 import ir.kaveh.yaddashtyar.util.fa
 import ir.kaveh.yaddashtyar.util.norm
 import kotlinx.coroutines.Dispatchers
@@ -138,7 +145,41 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     /** All note mutations run in order on one worker, so quick sequences can't race each other. */
     private val queue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
 
+    // ---------- ثبت‌نام / آپدیت / قفل ----------
+    val showRegister = MutableStateFlow(Registration.shouldPrompt(ctx))
+    val update = MutableStateFlow(Updater.compute(ctx))
+    val lockEnabled = MutableStateFlow(prefs.getBoolean("lock", false))
+    val askBackupPassword = MutableStateFlow<Uri?>(null)
+
+    /** بعد از پایان مهلت آپدیت، قابلیت‌های جدید (یادداشت/پیوست/ضبط تازه) بسته می‌شود. */
+    val limited: Boolean
+        get() = update.value.level == UpdateLevel.LIMITED || update.value.level == UpdateLevel.BLOCKED
+
     init {
+        // انتقال کلید API قدیمیِ متنی (اگر بود) به حافظهٔ رمزشده
+        prefs.getString("aiKey", null)?.let { old ->
+            if (old.isNotBlank()) SecureStore.put(ctx, "aiKey", old)
+            prefs.edit().remove("aiKey").apply()
+        }
+        // یک‌بار: ساخت نمایهٔ جست‌وجو از محتوای فایل‌های قبلی (PDF / Word / متن)
+        if (!prefs.getBoolean("indexV2", false)) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    for (a in dao.allFiles()) {
+                        if (a.text.isNotBlank()) continue
+                        val t = TextIndex.extract(ctx, FileUtil.fileOf(ctx, a), a)
+                        if (t.isNotBlank()) dao.updateFile(a.copy(text = t))
+                    }
+                    prefs.edit().putBoolean("indexV2", true).apply()
+                } catch (_: Exception) {
+                }
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            Updater.refresh(ctx)
+            update.value = Updater.compute(ctx)
+            Registration.flush(ctx)
+        }
         viewModelScope.launch(Dispatchers.IO) {
             for (job in queue) {
                 try {
@@ -366,6 +407,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun observeNote(id: Long) = dao.observe(id)
 
     fun createNote(onCreated: (Long) -> Unit) {
+        if (limited) { events.trySend("برای ساخت یادداشت جدید، نسخهٔ تازه را نصب کنید"); return }
         viewModelScope.launch {
             val f = filters.value
             val id = withContext(Dispatchers.IO) {
@@ -382,6 +424,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun createFromShare(text: String?, subject: String?, uris: List<Uri>) {
+        if (limited) { events.trySend("برای دریافت از برنامه‌های دیگر، نسخهٔ تازه را نصب کنید"); return }
         viewModelScope.launch {
             val id = withContext(Dispatchers.IO) {
                 val nid = dao.insert(Note(title = subject.orEmpty(), body = text.orEmpty()))
@@ -545,10 +588,36 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         touch(a.noteId)
     }
 
+    fun register(name: String, phone: String) {
+        Registration.save(ctx, name, phone)
+        showRegister.value = false
+        viewModelScope.launch(Dispatchers.IO) { Registration.flush(ctx) }
+        events.trySend("ثبت‌نام انجام شد؛ ممنون")
+    }
+
+    fun skipRegister() {
+        Registration.skip(ctx)
+        showRegister.value = false
+    }
+
+    fun setLock(on: Boolean) {
+        prefs.edit().putBoolean("lock", on).apply()
+        lockEnabled.value = on
+    }
+
+    val alarmMode = MutableStateFlow(prefs.getBoolean("alarmMode", true))
+    fun setAlarmMode(on: Boolean) {
+        prefs.edit().putBoolean("alarmMode", on).apply()
+        alarmMode.value = on
+    }
+
+    fun guideSeen(): Boolean = prefs.getBoolean("guideSeen", false)
+    fun setGuideSeen() = prefs.edit().putBoolean("guideSeen", true).apply()
+
     // ---------- AI / documents ----------
     val autoExtract = MutableStateFlow<Long?>(null)
 
-    fun aiKey(): String = prefs.getString("aiKey", "") ?: ""
+    fun aiKey(): String = SecureStore.get(ctx, "aiKey")
     fun aiModel(): String = prefs.getString("aiModel", DeadlineExtractor.DEFAULT_MODEL) ?: DeadlineExtractor.DEFAULT_MODEL
     fun hasConsent(): Boolean = prefs.getBoolean("aiConsent", false)
     fun setConsent() {
@@ -556,8 +625,8 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setAi(key: String, model: String) {
+        SecureStore.put(ctx, "aiKey", key.trim())
         prefs.edit()
-            .putString("aiKey", key.trim())
             .putString("aiModel", model.trim().ifEmpty { DeadlineExtractor.DEFAULT_MODEL })
             .apply()
         events.trySend("تنظیمات ذخیره شد")
@@ -579,7 +648,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- backup ----------
-    fun exportTo(uri: Uri) {
+    fun exportTo(uri: Uri, password: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val notes = dao.allNotes()
@@ -605,7 +674,8 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 val root = JSONObject().put("app", "yaddasht-yar").put("version", 2).put("notes", arr)
                 val os = ctx.contentResolver.openOutputStream(uri) ?: throw IOException("no stream")
-                ZipOutputStream(os.buffered()).use { z ->
+                val sink = if (password.isNullOrEmpty()) os.buffered() else BackupCrypto.encryptStream(os, password)
+                ZipOutputStream(sink).use { z ->
                     z.putNextEntry(ZipEntry("notes.json"))
                     z.write(root.toString().toByteArray(Charsets.UTF_8))
                     z.closeEntry()
@@ -619,19 +689,38 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
-                events.trySend("فایل پشتیبان ذخیره شد")
+                events.trySend(if (password.isNullOrEmpty()) "فایل پشتیبان ذخیره شد" else "پشتیبان رمزدار ذخیره شد")
             } catch (e: Exception) {
                 events.trySend("پشتیبان‌گیری ناموفق بود")
             }
         }
     }
 
-    fun importFrom(uri: Uri) {
+    fun importFrom(uri: Uri, password: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
+            var temp: File? = null
             try {
                 val dir = FileUtil.dir(ctx)
                 var json: String? = null
-                val input = ctx.contentResolver.openInputStream(uri) ?: throw IOException("no stream")
+                val encrypted = (ctx.contentResolver.openInputStream(uri) ?: throw IOException("no stream"))
+                    .use { BackupCrypto.isEncrypted(it) }
+                var input = ctx.contentResolver.openInputStream(uri) ?: throw IOException("no stream")
+                if (encrypted) {
+                    if (password == null) {
+                        input.close()
+                        askBackupPassword.value = uri
+                        return@launch
+                    }
+                    val t = File(ctx.cacheDir, "restore.tmp")
+                    temp = t
+                    try {
+                        input.use { BackupCrypto.decryptToFile(it, password, t) }
+                    } catch (e: Exception) {
+                        events.trySend("رمز اشتباه است یا فایل خراب است")
+                        return@launch
+                    }
+                    input = t.inputStream()
+                }
                 ZipInputStream(input.buffered()).use { z ->
                     var e = z.nextEntry
                     while (e != null) {
@@ -690,6 +779,8 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                 events.trySend("${added.fa()} یادداشت بازیابی شد")
             } catch (e: Exception) {
                 events.trySend("فایل پشتیبان معتبر نیست")
+            } finally {
+                temp?.delete()
             }
         }
     }

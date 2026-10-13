@@ -38,6 +38,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Event
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
@@ -109,6 +110,12 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
     var confirmDelete by remember { mutableStateOf<Long?>(null) }
     var confirmEmpty by remember { mutableStateOf(false) }
     var showAi by remember { mutableStateOf(false) }
+    var showExportPw by remember { mutableStateOf(false) }
+    var exportPw by remember { mutableStateOf<String?>(null) }
+    var showGuide by remember { mutableStateOf(false) }
+    val askPw by vm.askBackupPassword.collectAsStateWithLifecycle()
+    val lockOn by vm.lockEnabled.collectAsStateWithLifecycle()
+    val alarmOn by vm.alarmMode.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         vm.events.receiveAsFlow().collect { snack.showSnackbar(it) }
@@ -116,7 +123,7 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
-    ) { uri -> if (uri != null) vm.exportTo(uri) }
+    ) { uri -> if (uri != null) vm.exportTo(uri, exportPw); exportPw = null }
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> if (uri != null) vm.importFrom(uri) }
@@ -145,8 +152,23 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
                 closeDrawer = { scope.launch { drawer.close() } },
                 onExport = {
                     scope.launch { drawer.close() }
-                    val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
-                    exportLauncher.launch("yaddasht-backup-$stamp.zip")
+                    showExportPw = true
+                },
+                lockOn = lockOn,
+                alarmOn = alarmOn,
+                onAlarm = vm::setAlarmMode,
+                onLock = { want ->
+                    val km = ctx.getSystemService(android.app.KeyguardManager::class.java)
+                    if (want && km?.isDeviceSecure != true) {
+                        android.widget.Toast.makeText(
+                            ctx, "ابتدا در تنظیمات گوشی یک قفل صفحه (رمز، الگو یا اثر انگشت) تنظیم کنید",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    } else vm.setLock(want)
+                },
+                onGuide = {
+                    scope.launch { drawer.close() }
+                    showGuide = true
                 },
                 onImport = {
                     scope.launch { drawer.close() }
@@ -261,6 +283,25 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
             }
         }
     }
+
+    if (showExportPw) {
+        ExportPasswordDialog(
+            onConfirm = { pw ->
+                showExportPw = false
+                exportPw = pw.ifEmpty { null }
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+                exportLauncher.launch("yaddasht-backup-$stamp.zip")
+            },
+            onDismiss = { showExportPw = false }
+        )
+    }
+    askPw?.let { u ->
+        ImportPasswordDialog(
+            onConfirm = { pw -> vm.askBackupPassword.value = null; vm.importFrom(u, pw) },
+            onDismiss = { vm.askBackupPassword.value = null }
+        )
+    }
+    if (showGuide) ReminderGuideDialog(onDismiss = { showGuide = false })
 
     if (showAi) {
         AiSettingsDialog(
@@ -495,7 +536,12 @@ private fun DrawerContent(
     onExport: () -> Unit,
     onImport: () -> Unit,
     onDocument: () -> Unit,
-    onAiSettings: () -> Unit
+    onAiSettings: () -> Unit,
+    lockOn: Boolean,
+    alarmOn: Boolean,
+    onAlarm: (Boolean) -> Unit,
+    onLock: (Boolean) -> Unit,
+    onGuide: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
     val itemPad = NavigationDrawerItemDefaults.ItemPadding
@@ -574,15 +620,34 @@ private fun DrawerContent(
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 24.dp))
+            if (ir.kaveh.yaddashtyar.BuildConfig.AI_ENABLED) {
+                NavigationDrawerItem(
+                    label = { Text("یادداشت از سند (استخراج مهلت)") },
+                    icon = { Icon(Icons.Rounded.Event, null) },
+                    selected = false, onClick = onDocument, modifier = Modifier.padding(itemPad)
+                )
+                NavigationDrawerItem(
+                    label = { Text("تنظیمات هوش مصنوعی") },
+                    icon = { Icon(Icons.Rounded.Settings, null) },
+                    selected = false, onClick = onAiSettings, modifier = Modifier.padding(itemPad)
+                )
+            }
             NavigationDrawerItem(
-                label = { Text("یادداشت از سند (استخراج مهلت)") },
-                icon = { Icon(Icons.Rounded.Event, null) },
-                selected = false, onClick = onDocument, modifier = Modifier.padding(itemPad)
+                label = { Text("قفل برنامه (اثر انگشت / رمز گوشی)") },
+                icon = { Icon(Icons.Rounded.Lock, null) },
+                badge = { androidx.compose.material3.Switch(checked = lockOn, onCheckedChange = onLock) },
+                selected = false, onClick = { onLock(!lockOn) }, modifier = Modifier.padding(itemPad)
             )
             NavigationDrawerItem(
-                label = { Text("تنظیمات هوش مصنوعی") },
-                icon = { Icon(Icons.Rounded.Settings, null) },
-                selected = false, onClick = onAiSettings, modifier = Modifier.padding(itemPad)
+                label = { Text("یادآور با زنگ هشدار") },
+                icon = { Icon(Icons.Rounded.Alarm, null) },
+                badge = { androidx.compose.material3.Switch(checked = alarmOn, onCheckedChange = onAlarm) },
+                selected = false, onClick = { onAlarm(!alarmOn) }, modifier = Modifier.padding(itemPad)
+            )
+            NavigationDrawerItem(
+                label = { Text("راهنمای تنظیمات یادآوری") },
+                icon = { Icon(Icons.Rounded.Alarm, null) },
+                selected = false, onClick = onGuide, modifier = Modifier.padding(itemPad)
             )
             NavigationDrawerItem(
                 label = { Text("پشتیبان‌گیری (ZIP)") },

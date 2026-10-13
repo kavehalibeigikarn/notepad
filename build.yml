@@ -8,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,11 +24,37 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "Signing key found" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "WARNING: secrets are not set. The APK is signed with a temporary debug key and cannot update an installed version." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-      - name: Upload APK
+      - name: Build lite and full (release)
+        run: gradle assembleLiteRelease assembleFullRelease --no-daemon --stacktrace
+
+      - name: Show errors
+        if: failure()
+        run: |
+          echo "## Build errors" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          gradle assembleLiteRelease --no-daemon --console=plain 2>&1 | grep -E "^e: |error:|FAILED|What went wrong" -A3 | head -80 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload lite APK
         uses: actions/upload-artifact@v4
         with:
-          name: YaddashtYar-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: YaddashtYar-LITE
+          path: app/build/outputs/apk/lite/release/*.apk
+
+      - name: Upload full APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: YaddashtYar-FULL
+          path: app/build/outputs/apk/full/release/*.apk
