@@ -29,6 +29,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -190,6 +194,30 @@ private fun App(vm: NotesViewModel = viewModel()) {
 
     Box(Modifier.fillMaxSize()) {
         HomeScreen(vm = vm, onOpen = { editing = it })
+        // اگر زنگ در حال پخش است، همیشه یک دکمهٔ خاموش بالای صفحه دیده می‌شود
+        val ringing by ir.kaveh.yaddashtyar.util.AlarmService.active.collectAsStateWithLifecycle()
+        if (ringing) {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            Surface(
+                color = MaterialTheme.colorScheme.error,
+                contentColor = MaterialTheme.colorScheme.onError,
+                modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter).fillMaxWidth()
+            ) {
+                androidx.compose.foundation.layout.Row(
+                    Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.Text("زنگ در حال پخش است", Modifier.weight(1f))
+                    androidx.compose.material3.Button(
+                        onClick = { ir.kaveh.yaddashtyar.util.AlarmService.stop(ctx) },
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onError,
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) { androidx.compose.material3.Text("خاموش") }
+                }
+            }
+        }
         AnimatedVisibility(
             visible = editing != null,
             enter = slideInVertically { it / 10 } + fadeIn(),

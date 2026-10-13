@@ -276,6 +276,13 @@ fun ReminderGuideDialog(onDismiss: () -> Unit) {
                 OutlinedButton(onClick = {
                     try {
                         ir.kaveh.yaddashtyar.util.AlarmService.start(ctx, -1L, "آزمایش زنگ", "اگر صدا شنیدید، یادآورها درست کار می‌کنند")
+                        // صفحهٔ زنگ با دکمهٔ «خاموش» باز شود
+                        ctx.startActivity(
+                            Intent(ctx, AlarmActivity::class.java)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                .putExtra("noteId", -1L).putExtra("title", "آزمایش زنگ")
+                                .putExtra("text", "اگر صدا شنیدید، یادآورها درست کار می‌کنند")
+                        )
                     } catch (_: Exception) {
                         android.widget.Toast.makeText(ctx, "شروع زنگ ممکن نشد؛ اجازهٔ اعلان و باتری را بررسی کنید", android.widget.Toast.LENGTH_LONG).show()
                     }

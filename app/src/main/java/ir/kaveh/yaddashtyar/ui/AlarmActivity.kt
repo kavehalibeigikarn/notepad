@@ -66,7 +66,8 @@ class AlarmActivity : ComponentActivity() {
             YaddashtTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     val active by AlarmService.active.collectAsStateWithLifecycle()
-                    LaunchedEffect(active) { if (!active) finish() }
+                    var seen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                    LaunchedEffect(active) { if (active) seen = true else if (seen) finish() }
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                         Column(
                             Modifier.fillMaxSize().padding(28.dp),

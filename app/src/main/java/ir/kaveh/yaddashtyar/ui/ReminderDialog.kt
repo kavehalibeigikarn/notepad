@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -158,13 +160,22 @@ fun ReminderDialog(
     val chosen = if (dateOnly) toMillis(jy, jm, jd, 12, 0) else toMillis(jy, jm, jd, hour, minute)
     val valid = dateOnly || chosen > now
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+      // فاصله از نوار وضعیت و نوار ناوبری (دکمهٔ بک) تا دکمه‌های پایین زیر آن‌ها نروند
+      androidx.compose.foundation.layout.Box(
+          Modifier.fillMaxSize().systemBarsPadding().padding(vertical = 16.dp),
+          contentAlignment = Alignment.Center
+      ) {
         Surface(
             shape = RoundedCornerShape(28.dp),
             color = cs.surfaceContainerHigh,
             modifier = Modifier.fillMaxWidth(0.94f)
         ) {
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp)) {
+            Column(Modifier.padding(20.dp)) {
+              Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Alarm, null, tint = cs.tertiary)
                     Spacer(Modifier.width(10.dp))
@@ -264,6 +275,10 @@ fun ReminderDialog(
 
                 // time
                 if (!dateOnly) {
+                  // ساعت سمت چپ و دقیقه سمت راست (مثل ۱۴:۳۰)، مستقل از راست‌به‌چپ بودن صفحه
+                  androidx.compose.runtime.CompositionLocalProvider(
+                      androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+                  ) {
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
@@ -276,6 +291,7 @@ fun ReminderDialog(
                         )
                         Stepper(two(minute), onUp = { minute = (minute + 5) % 60 }, onDown = { minute = (minute + 55) % 60 })
                     }
+                  }
                     Spacer(Modifier.height(8.dp))
                 }
                 Text(
@@ -287,6 +303,7 @@ fun ReminderDialog(
                     color = if (valid) cs.onSurfaceVariant else cs.error
                 )
                 Spacer(Modifier.height(14.dp))
+              }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (initial > 0 && !dateOnly) {
                         TextButton(onClick = onClear) { Text("حذف یادآوری", color = cs.error) }
@@ -298,6 +315,7 @@ fun ReminderDialog(
                 }
             }
         }
+      }
     }
 }
 

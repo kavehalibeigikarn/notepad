@@ -47,7 +47,11 @@ class AlarmService : Service() {
         }
 
         fun stop(ctx: Context) {
-            if (active.value) ctx.startService(Intent(ctx, AlarmService::class.java).setAction(ACTION_STOP))
+            try {
+                ctx.startService(Intent(ctx, AlarmService::class.java).setAction(ACTION_STOP))
+            } catch (_: Exception) {
+            }
+            active.value = false
         }
     }
 
