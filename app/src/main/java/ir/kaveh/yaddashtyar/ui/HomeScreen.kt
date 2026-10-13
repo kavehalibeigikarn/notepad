@@ -271,6 +271,7 @@ fun HomeScreen(vm: NotesViewModel, onOpen: (Long) -> Unit) {
                                     terms = st.terms,
                                     dateOf = if (byCreated) n.note.createdAt else n.note.updatedAt,
                                     inTrash = f.view == ViewMode.TRASH,
+                                    urgent = g.urgent,
                                     onClick = { onOpen(n.note.id) },
                                     onTogglePin = { vm.setPinned(n.note.id, !n.note.pinned) },
                                     onRestore = { vm.restore(n.note.id) },

@@ -17,6 +17,7 @@ import ir.kaveh.yaddashtyar.data.encodeChecklist
 import ir.kaveh.yaddashtyar.data.encodeDeadlines
 import ir.kaveh.yaddashtyar.data.nearestOpenDeadline
 import ir.kaveh.yaddashtyar.data.isBlankNote
+import ir.kaveh.yaddashtyar.data.isUrgent
 import ir.kaveh.yaddashtyar.data.parseChecklist
 import ir.kaveh.yaddashtyar.data.tagList
 import ir.kaveh.yaddashtyar.util.Dates
@@ -87,7 +88,7 @@ data class Filters(
     val active: Boolean get() = topic != null || tag != null || file != null || reminder || deadline
 }
 
-data class NoteGroup(val label: String, val notes: List<NoteWithFiles>)
+data class NoteGroup(val label: String, val notes: List<NoteWithFiles>, val urgent: Boolean = false)
 data class Counts(val all: Int = 0, val pinned: Int = 0, val archive: Int = 0, val trash: Int = 0)
 
 data class HomeState(
@@ -212,8 +213,20 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     /** Set when a note should be opened (share intent, notification tap). */
     val pendingOpen = MutableStateFlow<Long?>(null)
 
+    /** هر دقیقه یک‌بار؛ تا یادداشت‌های نزدیک به یادآوری بدون باز کردن دوبارهٔ برنامه قرمز و بالا بیایند. */
+    private val clock = MutableStateFlow(System.currentTimeMillis())
+
+    init {
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(60_000)
+                clock.value = System.currentTimeMillis()
+            }
+        }
+    }
+
     val state: StateFlow<HomeState> =
-        combine(dao.observeAll(), filters, query) { all, f, q -> build(all, f, q) }
+        combine(dao.observeAll(), filters, query, clock) { all, f, q, now -> build(all, f, q, now) }
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeState())
 
@@ -270,7 +283,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun build(allRaw: List<NoteWithFiles>, f: Filters, q: String): HomeState {
+    private fun build(allRaw: List<NoteWithFiles>, f: Filters, q: String, now: Long): HomeState {
         val all = allRaw.filter { !it.isBlankNote() }
         val active = all.filter { !it.note.trashed && !it.note.archived }
         val counts = Counts(
@@ -338,7 +351,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         val terms = q.trim().split(Regex("\\s+")).filter { it.isNotEmpty() && !it.startsWith("#") }
         return HomeState(
             loaded = true,
-            groups = group(list, f),
+            groups = groupWithUrgent(list, f, now),
             shown = list.size,
             totalNotes = all.size,
             counts = counts,
@@ -346,6 +359,16 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             tags = tags,
             terms = terms
         )
+    }
+
+    /** یادداشت‌های با یادآوری نزدیک (از ۲۴ ساعت قبل) همیشه اول فهرست، به ترتیب نزدیک‌ترین زمان. */
+    private fun groupWithUrgent(list: List<NoteWithFiles>, f: Filters, now: Long): List<NoteGroup> {
+        if (f.deadline || f.view == ViewMode.TRASH) return group(list, f)
+        val urgent = list.filter { it.note.isUrgent(now) }.sortedBy { it.note.remindAt }
+        if (urgent.isEmpty()) return group(list, f)
+        val ids = urgent.map { it.note.id }.toSet()
+        val rest = list.filter { it.note.id !in ids }
+        return listOf(NoteGroup("یادآوری نزدیک", urgent, urgent = true)) + group(rest, f)
     }
 
     private fun group(list: List<NoteWithFiles>, f: Filters): List<NoteGroup> {

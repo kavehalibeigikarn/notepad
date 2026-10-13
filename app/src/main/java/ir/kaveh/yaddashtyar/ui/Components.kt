@@ -60,7 +60,9 @@ import ir.kaveh.yaddashtyar.data.historyList
 import ir.kaveh.yaddashtyar.data.nearestOpenDeadline
 import ir.kaveh.yaddashtyar.data.parseChecklist
 import ir.kaveh.yaddashtyar.data.tagList
+import ir.kaveh.yaddashtyar.ui.theme.UrgentBorder
 import ir.kaveh.yaddashtyar.ui.theme.noteBg
+import ir.kaveh.yaddashtyar.ui.theme.urgentBg
 import ir.kaveh.yaddashtyar.util.Dates
 import ir.kaveh.yaddashtyar.util.FileUtil
 import ir.kaveh.yaddashtyar.util.Kind
@@ -113,6 +115,7 @@ fun NoteCard(
     terms: List<String>,
     dateOf: Long,
     inTrash: Boolean,
+    urgent: Boolean = false,
     onClick: () -> Unit,
     onTogglePin: () -> Unit,
     onRestore: () -> Unit,
@@ -132,9 +135,10 @@ fun NoteCard(
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = noteBg(note.color)),
+        colors = CardDefaults.cardColors(containerColor = if (urgent) urgentBg() else noteBg(note.color)),
         elevation = CardDefaults.cardElevation(0.dp),
-        border = if (note.color == 0) BorderStroke(1.dp, cs.outlineVariant) else null
+        border = if (urgent) BorderStroke(1.5.dp, UrgentBorder)
+        else if (note.color == 0) BorderStroke(1.dp, cs.outlineVariant) else null
     ) {
         Column {
             if (images.isNotEmpty()) {

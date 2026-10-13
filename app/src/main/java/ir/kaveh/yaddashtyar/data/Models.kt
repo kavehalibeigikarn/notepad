@@ -142,3 +142,7 @@ fun appendHistory(history: String, createdAt: Long, now: Long): String {
     }
     return list.takeLast(100).joinToString("\n")
 }
+
+/** از ۲۴ ساعت قبل از یادآوری تا ۲ ساعت بعد از آن، یادداشت «فوری» حساب می‌شود (قرمز و بالای فهرست). */
+fun Note.isUrgent(now: Long = System.currentTimeMillis()): Boolean =
+    remindAt > 0 && !trashed && now >= remindAt - 24L * 3600_000 && now <= remindAt + 2L * 3600_000

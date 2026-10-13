@@ -135,6 +135,7 @@ import ir.kaveh.yaddashtyar.data.parseChecklist
 import ir.kaveh.yaddashtyar.data.tagList
 import ir.kaveh.yaddashtyar.ui.theme.NoteAccents
 import ir.kaveh.yaddashtyar.ui.theme.noteBg
+import ir.kaveh.yaddashtyar.ui.theme.urgentBg
 import ir.kaveh.yaddashtyar.util.AudioController
 import ir.kaveh.yaddashtyar.util.ExtractOutcome
 import ir.kaveh.yaddashtyar.util.Extraction
@@ -355,8 +356,10 @@ fun EditorScreen(vm: NotesViewModel, noteId: Long, onClose: () -> Unit) {
         }
     }
 
+    val urgent = remindAt > 0 && System.currentTimeMillis().let { it >= remindAt - 24L * 3600_000 && it <= remindAt + 2L * 3600_000 }
+    val urgentColor = urgentBg()
     val bg by animateColorAsState(
-        if (color == 0) cs.background else noteBg(color), label = "editorBg"
+        if (urgent) urgentColor else if (color == 0) cs.background else noteBg(color), label = "editorBg"
     )
 
     Scaffold(

@@ -125,6 +125,12 @@ fun noteBg(index: Int): Color {
     return if (index <= 0 || index >= list.size) MaterialTheme.colorScheme.surfaceContainerLowest else list[index]
 }
 
+/** پس‌زمینهٔ قرمز یادداشتی که یادآورش نزدیک است. */
+@Composable
+fun urgentBg(): Color = if (isSystemInDarkTheme()) Color(0xFF5B1F25) else Color(0xFFFFD9D9)
+
+val UrgentBorder = Color(0xFFE5484D)
+
 @Composable
 fun YaddashtTheme(content: @Composable () -> Unit) {
     MaterialTheme(
