@@ -273,6 +273,14 @@ fun ReminderGuideDialog(onDismiss: () -> Unit) {
                 if (Build.VERSION.SDK_INT >= 34) OutlinedButton(onClick = {
                     go(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:${ctx.packageName}")))
                 }) { Text("اجازهٔ نمایش تمام‌صفحه") }
+                OutlinedButton(onClick = {
+                    try {
+                        ir.kaveh.yaddashtyar.util.AlarmService.start(ctx, -1L, "آزمایش زنگ", "اگر صدا شنیدید، یادآورها درست کار می‌کنند")
+                    } catch (_: Exception) {
+                        android.widget.Toast.makeText(ctx, "شروع زنگ ممکن نشد؛ اجازهٔ اعلان و باتری را بررسی کنید", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }) { Text("▶ آزمایش زنگ هشدار") }
+                Text("اگر در آزمایش صدایی نیامد: حالت «مزاحم نشوید» (DND) را خاموش کنید یا برای یادداشت‌یار استثنا بگذارید، و اعلان‌های برنامه را روشن کنید.")
                 Text("۱) اعلان‌ها باید روشن باشند.")
                 OutlinedButton(onClick = {
                     go(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName))

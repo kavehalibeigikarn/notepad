@@ -13,8 +13,8 @@ android {
         applicationId = "ir.kaveh.yaddashtyar"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
     }
 
     // دو نسخه با یک applicationId و یک کلید امضا: lite (بدون هوش مصنوعی) و full.

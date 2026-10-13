@@ -137,27 +137,42 @@ class AlarmService : Service() {
 
     private fun startSound() {
         releasePlayer()
-        try {
-            val uri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            volume = 0.25f
-            player = MediaPlayer().apply {
-                setAudioAttributes(
+        raiseAlarmVolume()
+        // چند منبع صدا به ترتیب امتحان می‌شود؛ آخری فایل خود برنامه است و همیشه کار می‌کند
+        val sources = ArrayList<(MediaPlayer) -> Unit>()
+        listOfNotNull(
+            RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM),
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        ).distinct().forEach { uri -> sources.add { mp -> mp.setDataSource(applicationContext, uri) } }
+        sources.add { mp ->
+            resources.openRawResourceFd(R.raw.alarm_beep).use { fd ->
+                mp.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
+            }
+        }
+        for (src in sources) {
+            val mp = MediaPlayer()
+            try {
+                mp.setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_ALARM)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
-                setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
-                setDataSource(applicationContext, uri)
-                isLooping = true
-                setVolume(volume, volume)
-                prepare()
-                start()
+                mp.setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                src(mp)
+                mp.isLooping = true
+                volume = 0.4f
+                mp.setVolume(volume, volume)
+                mp.prepare()
+                mp.start()
+                player = mp
+                handler.postDelayed(ramp, 2000)
+                break
+            } catch (_: Exception) {
+                try { mp.release() } catch (_: Exception) {}
             }
-            handler.postDelayed(ramp, 2000)
-        } catch (_: Exception) {
         }
         try {
             @Suppress("DEPRECATION")
@@ -166,6 +181,18 @@ class AlarmService : Service() {
             val pattern = longArrayOf(0, 900, 700)
             if (Build.VERSION.SDK_INT >= 26) v?.vibrate(VibrationEffect.createWaveform(pattern, 0))
             else @Suppress("DEPRECATION") v?.vibrate(pattern, 0)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** مثل هر ساعت زنگ‌دار: اگر حجم آلارم صفر یا خیلی کم است، تا حد قابل‌شنیدن بالا می‌رود. */
+    private fun raiseAlarmVolume() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM)
+            val cur = am.getStreamVolume(android.media.AudioManager.STREAM_ALARM)
+            val want = (max * 0.7f).toInt().coerceAtLeast(1)
+            if (cur < want) am.setStreamVolume(android.media.AudioManager.STREAM_ALARM, want, 0)
         } catch (_: Exception) {
         }
     }

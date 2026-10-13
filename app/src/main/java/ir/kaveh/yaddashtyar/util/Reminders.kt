@@ -25,7 +25,7 @@ import java.time.Instant
 import java.time.ZoneId
 
 object Reminders {
-    const val CHANNEL = "reminders"
+    const val CHANNEL = "reminders2"
     const val CHANNEL_DEADLINE = "deadlines"
     const val EXTRA_OPEN = "openNoteId"
     const val ACTION_FIRE = "ir.kaveh.yaddashtyar.REMINDER_FIRE"
@@ -61,9 +61,19 @@ object Reminders {
     fun ensureChannel(ctx: Context) {
         if (Build.VERSION.SDK_INT >= 26) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
+            nm.deleteNotificationChannel("reminders")
             if (nm.getNotificationChannel(CHANNEL) == null) {
                 val ch = NotificationChannel(CHANNEL, "یادآوری‌ها", NotificationManager.IMPORTANCE_HIGH)
-                ch.description = "اعلان یادآوری یادداشت‌ها"
+                ch.description = "اعلان یادآوری یادداشت‌ها (صدای آلارم)"
+                // اگر زنگ کامل اجرا نشد، اعلان با صدای آلارم گوشی پخش شود
+                ch.setSound(
+                    android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+                        ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION),
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
+                )
+                ch.enableVibration(true)
                 nm.createNotificationChannel(ch)
             }
             if (nm.getNotificationChannel(CHANNEL_DEADLINE) == null) {
